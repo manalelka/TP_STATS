@@ -1,6 +1,6 @@
 ---
 title: "TP Statistique"
-author: 
+author: Manal El Karchouni, Roxane Gall, Jean Haberer
 date: "31 Mars 2020"
 output: pdf_document
 ---
@@ -29,7 +29,7 @@ Voici le plan de ce qui sera fait dans le TP.
 Lecture du fichier des villes :
 
 ```{r, echo=TRUE}
-villes <- read.csv('DonneesGPSvilles.csv',header=TRUE,dec='.',sep=';',quote="\"")
+villes <- read.csv('./DonneesGPSvilles.csv',header=TRUE,dec='.',sep=';',quote="\"")
 str(villes)
 ```
 Représentation des chemins par plus proches voisins et du chemin optimal :
