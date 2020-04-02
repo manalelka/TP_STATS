@@ -1,0 +1,356 @@
+---
+title: "TP Statistique"
+author: "Manal El Karchouni, Roxane Gall, Jean Haberer"
+date: "01 Avril 2020"
+output:
+  pdf_document: default
+  html_document:
+   df_print: paged
+---
+
+```{r setup, include=FALSE}
+set.seed(287)
+knitr::opts_chunk$set(echo = TRUE)
+library(sp)
+library(maps)
+library(microbenchmark)
+library(TSP)
+library(TSPpackage)
+```
+
+
+# 0. Visualisation de chemins
+
+Lecture du fichier des villes :
+
+```{r, echo=TRUE}
+villes <- read.csv('./DonneesGPSvilles.csv',header=TRUE,dec='.',sep=';',quote="\"")
+str(villes)
+```
+
+Représentation des chemins par plus proches voisins et du chemin optimal :
+```{r, echo=TRUE}
+coord <- cbind(villes$longitude, villes$latitude)
+dist <- distanceGPS(coord)
+voisins <- TSPnearest(dist)
+
+pathOpt <- c(1, 8, 9, 4, 21, 13, 7, 10, 3, 17, 16, 20, 6, 19, 15, 18, 11, 5, 22, 14, 12, 2)
+
+par(mfrow=c(1, 2), mar=c(1, 1, 2, 1))
+plotTrace(coord[voisins$chemin, ], title='Plus proches voisins')
+plotTrace(coord[pathOpt, ], title='Chemin optimal')
+
+``` 
+
+Les longueurs des trajets (à vol d'oiseau) valent respectivement, pour la méthode des plus proches voisins :
+```{r, echo=FALSE}
+voisins$longueur
+```
+
+et pour la méthode optimale :
+```{r, echo=FALSE}
+calculeLongueur(dist, pathOpt)
+
+``` 
+
+Ceci illustre bien l'intérêt d'un algorithme de voyageur de commerce. Nous allons dans la suite étudier les performances de cet algorithme.
+
+# 1. Comparaison d'algorithmes
+
+Nombre de sommets fixes et graphes "identiques".
+
+```{r, echo=TRUE}
+ n <- 10
+sommets <- data.frame(x = runif(n), y = runif(n))
+```
+
+## 1.1. Longueur des chemins
+
+Comparaison des longueurs de différentes méthodes : 
+
+   * boxplots
+```{r, echo=FALSE}
+repetitive<-rep(0, 50)
+nearest_insertion<-rep(0, 50)
+two_opt<-rep(0, 50)
+nearest<-rep(0, 50)
+branch<-rep(0, 50)
+
+for (i in 1:50) {
+  sommets <- data.frame(x = runif(10), y = runif(10))
+  couts <- distance(sommets)
+  repetitive[i]<-TSPsolve(couts, 'repetitive_nn')
+  nearest_insertion[i]<-TSPsolve(couts, 'nearest_insertion')
+  two_opt[i]<-TSPsolve(couts, 'two_opt')
+  nearest[i]<-TSPsolve(couts, 'nearest')
+  branch[i]<-TSPsolve(couts, 'branch')
+}
+mat <- cbind(repetitive, nearest_insertion, two_opt, nearest, branch)
+colnames(mat)<-c("repetitive", "near_ins", "two_opt", "nearest", "branch")
+par(mfrow=c(1, 1))
+boxplot(mat, notch=TRUE)
+``` 
+
+Ces boxplots représentent la distribution des longueurs des chemins hamiltoniens donnés par les 5 méthodes sur 50 réalisations de graphes aléatoires (n=10 sommets dont les coordonnées suivent des lois uniformes sur [0,1]). Les algorithmes représentés sont, de gauche à droite, repetitive, nearest_insertion, two_opt, nearest et branch.
+En moyenne, on observe que tous ont des médianes qui n’ont pas exactement la même valeur mais sont proches de 3.0. 
+La distribution varie entre les différents algorithmes et est asymétrique pour certains.
+Par exemple nearest a le plus grand étalement, avec une très légère asymétrie vers les valeurs plus basses. En moyenne, sa valeur maximale est supérieure à 4 et son 3ème quartile vaut environ 3.5. Sa médiane est également légèrement plus élevée que pour les autres algorithmes. Nearest donne en moyenne de plus hautes valeurs de longueur du chemin hamiltonien mais est l’algorithme le plus variable.
+A l’inverse branch a un étalement beaucoup plus faible et des valeurs globalement plus basses que les autres algorithmes (max, 3ème et 1er quartiles, médiane et min inférieurs). C’est donc l’algorithme le plus performant.
+
+Nous allons désormais comparer les algorithmes Nearest et Branch and Bound à l’aide d’hypothèses paramétriques.
+Soit $m_n$ et $m_b$ les espérances respectives des algorithmes nearest et de branch and bound. Nous réalisons le test de l’hypothèse nulle $(H_0) -> m_{nn} - m_b <= 0$ (l’espérance de nearest est inférieure à celle de branch and bound) contre son hypothèse alternative $(H_1) -> m_{nn} - m_b > 0$.
+
+   * test entre 'nearest' et 'branch'
+```{r, echo=TRUE}
+t.test(nearest-branch,NULL,"greater")
+```
+
+Le test d’hypothèse renvoie la p-valeur, qui résume les résultats du test.
+Ici en moyenne, la p-valeur est $\alpha_c = 4, 383737 * 10^{-10}$. Cette valeur est en général très faible : cela signifie que l’on peut rejeter l’hypothèse avec un faible risque de se tromper (risque de l’ordre de $10^{-10} %$). Autrement dit, on peut valider l’hypothèse (H1) indiquant que les espérances des algorithmes des plus proches voisins sont supérieures à celles des algorithmes de Branch and Bound, avec un faible risque d’erreur.
+En conclusion, l’algorithme de Branch and Bound est plus performant que Nearest. Cette hypothèse est vérifiée sur le box plot précédent.
+
+Maintenant nous réalisons les tests pour comparer 2 à 2 les longueurs moyennes obtenues par les algorithmes. La matrice obtenue donne les p-valeurs du test de l’hypothèse nulle $(H_0) m_i =  m_j$ contre l’hypothèse alternative $(H_1) m_i \not= m_j$ avec $i \not= j$.
+
+Nous obtenons la matrice résultat ci-dessous :
+
+   * tests 2 à 2 
+```{r, echo=TRUE}
+results<-as.vector(mat)
+methods<-rep(colnames(mat), each=50)
+pairwise.t.test(results, methods, p.adjust.method='bonferroni')
+
+``` 
+Différentes observations sont à noter sur ces résultats :
+
+La p-valeur pour les couples (branch,repetitive), (near_insertion,nearest),  (near_insertion,repetitive),  (near_insertion,two_opt) et (nearest,two_opt) est en moyenne élevée. On ne peut donc pas rejeter l’hypothèse H_0. Cela signifie que les résultats des algorithmes sont similaires.
+La p-valeur pour (branch,near_insertion), (branch,two_opt), (nearest, repetitive) et (repetitive,two_opt) est généralement plus faible. On peut donc rejeter l’hypothèse H_0 avec un plus faible risque de se tromper (plus $\alpha_c$ est petit, plus le risque est faible) : nous obtenons en moyenne 5,07% pour branch et two_opt, 47,98% pour branch et near_insertion etc.. Cela signifie que leurs résultats sont différents.
+Les résultats dont on peut affirmer qu’ils sont les plus éloignés, avec la p-valeur la plus faible en moyenne $\alpha_c$ = 0.0074 et donc un risque de se tromper inférieur à 1 %, sont ceux entre branch et nearest. Cela rejoint l’hypothèse de la question précédente et le box plot initial qui suggérait que branch était plus performant que nearest.
+
+## 1.2. Temps de calcul
+
+Comparaison des temps à l'aide du package microbenchmark.
+
+Finalement nous allons effectuer une comparaison des temps d'exécution à l'aide du package microbenchmark afin de déterminer l'algorithme le plus rapide.
+
+Exemple d'application de microbenchmark :
+```{r, echo=TRUE}
+microbenchmark<-microbenchmark(TSPsolve(couts,'repetitive_nn')
+               ,TSPsolve(couts,'branch')
+               ,TSPsolve(couts,'nearest')
+               ,TSPsolve(couts,'nearest_insertion')
+               ,TSPsolve(couts,'two_opt')
+               ,times=20, setup={  sommets <- data.frame(x = runif(10), y = runif(10))
+               couts <- distance(sommets)})
+summary(microbenchmark)
+```
+
+Nous observons ici les résultats de la fonction microbenchmark pour comparer les temps des 5 méthodes étudiées sur 20 graphes.
+D’après les moyennes des différents temps d’exécution, le classement des algorithmes du plus long au plus rapide en moyenne est : repetitive, branch, nearest, nearest_insertion et two_opt. Le plus long algorithme à s’exécuter à tout point de vue est indéniablement repetitive (son min est supérieur à toutes les moyennes des autres algorithmes et à 4 des 5  valeurs max). A l’inverse le plus rapide est nearest (son max est inférieur à toutes les valeurs min des autres algorithmes). Cependant on ne peut pas analyser la rapidité des algorithmes uniquement sur leur moyenne. Par exemple, l’algorithme two_opt a une moyenne plus faible que celle de nearest_insertion mais une valeur max plus grande. Cela signifie que pour certains cas two_opt peut être plus lent que nearest_insertion.
+En tenant compte des différents critères et des ordres de grandeurs les algorithmes sont classés en 3 catégories : **a** de l’ordre des dizaines et centaines de secondes pour nearest, nearest_insertion et two_opt, **b** de l'ordre de milliers de secondes pour branch et **c** de l’ordre des dizaines de milliers de secondes pour repetitive.
+Une autre observation intéressante peut être de regarder la répartition des valeurs c’est-à-dire la différence entre le 1er et 3ème quartile ou entre les valeurs extrêmes (min et max). Par exemple nous aurions pu présenter un box plot pour mieux les visualiser. L’algorithme Branch a régulièrement une très grande dispersion de ses valeurs : en moyenne nous obtenons un min d’environ 1959s et un max à environ 21 135s avec une médiane de 5558s. Cette asymétrie vers de grandes valeurs explique que sa moyenne soit plus élevée que sa médiane et cela signifie que le temps d’exécution est variable et va exploser dans certains cas. Cela s’expliquerait sûrement par sa complexité exponentielle en temps.
+Il aurait été intéressant de comparer l’efficacité des algorithmes selon la taille des graphes analysés.
+
+# 2. Etude e la complexité de l'algorithme Branch and Bound
+
+## 2.1. Comportement par rapport au nombre de sommets : premier modèle
+
+Récupération du temps sur 10 graphes pour différentes valeurs de $n$.
+
+```{r, echo=TRUE}
+seqn <- seq(4, 13, 1)
+temps<-matrix(0, length(seqn), 10)
+for(i in 1:length(seqn))
+temps[i, ]<-microbenchmark(TSPsolve(couts, method = 'branch'),times = 10,
+                          setup = { n <- seqn[i]
+                                couts <- distance(cbind(x = runif(n), y = runif(n)))})$time
+
+``` 
+Visualisation de temps en fonction de n puis de $\log(temps)^2$ en fonction de $n$ :
+
+```` {r, echo=TRUE}
+par(mfrow=c(1,2)) # 2 graphiques sur 1 ligne
+par(mar=c(1,1,1,1))
+matplot(seqn, temps, xlab='seqn', ylab='temps')
+matplot(seqn, log(temps)^2, xlab='seqn', ylab='expression(log(temps)^2)')
+```` 
+
+Nous remarquons que l’évolution du temps en fonction de n ne se comporte pas de manière linéaire. En revanche après le changement de variable on peut bien appliquer un modèle de régression linéaire pour $\log(temps)^2$  en fonction de n.
+
+Ajustement du modèle linéaire de $\log(temps)^2$ en fonction de $n$.
+
+```` {r, echo = TRUE}
+vect_temps <- log(as.vector(temps))^2
+vect_dim <- rep(seqn,times=10)
+temps.lm <- lm(vect_temps ~ vect_dim)
+summary(temps.lm)
+```
+
+## Analyse de la validité du modèle : 
+
+## Pertinence des coefficients et du modèle, 
+
+À l’aide des informations décrites par R, nous remarquons que: 
+Les coefficients ont un taux d'erreur important allant en moyenne jusqu'à 7.3277 pour l'ordonnée à l'origine et 0.8167 pour le coefficient directeur, nous ne pouvons donc pas affirmer la pertinence des coefficients du modèle linéaire.
+La p-valeur de chaque coefficient quand à elle est très petite, inférieure à $2.2e^{-16}$ durant chacune de nos exécution pour le coefficient directeur et égale en moyenne à 0.0805% pour l’ordonnée à l’origine.
+
+En conclusion, au vu du taux d’erreur important, il faut rejeter l'hypothèse selon laquelle $\log(temps)^2$ d'exécution de l'algorithme Branch and Bound suit un modèle linéaire.
+
+
+## Étude des hypothèses sur les résidus.
+
+  Les hypothèses sur les résidus à étudier sont les suivantes: 
++Loi normale
++Espérance nulle 
++Variance constante 
++Indépendance
+  Les graphiques permettant de valider ou non ces dernières sont les suivants : 
+
+```{r, echo=TRUE}
+par(mfrow=c(2, 2)) # 4 graphiques, sur 2 lignes et 2 colonnes
+plot(temps.lm)
+``` 
+
+Au vue des résultats, nous pouvons remarquer que: 
+- Les graphiques Residuals vs Fitted et Scale-Location montrent de nombreux points très écartés du modèle, la variance des résidus n'est donc pas constante. Les résidus sont dit hétéroscédastiques. 
+- Le graphique Normal Q-Q semble être aligné avec la droite, plus au centre qu’au niveau des extrémités. Nous aurions tendance à affirmer que l'hypothèse de Loi normale est potentiellement non réfutable (à confirmer avec d'autres tests cf test de Shapiro-Wilk)
+- Le graphique Residuals vs Leverage montre l'influence des échantillons. Nous remarquons l'existence d'un grand nombre d’outliers, par conséquent beaucoup de points ne contribuent pas à la construction du modèle linéaire. 
+
+Au vu de la non-validation de quelques unes de ces 4 hypothèses, le modèle n'est pas vérifié. Observons si les résidus suivent tout de même une loi normale.
+
+Pour vérifier si les résidus suivent une loi normale, nous effectuons le test de Shapiro-Wilk : 
+
+```{r, echo=FALSE}
+shapiro.test(residuals(temps.lm))
+```
+
+Nous obtenons une p-valeur autour de 0.0004999 très faible (inférieur à 0, 1 %). Cela signifie que le modèle est cohérent et que les résidus suivent bien une loi normale.
+
+## 2.2. Comportement par rapport au nombre de sommets : étude du comportement moyen
+
+## Récupération du temps moyen.
+
+```{r, echo=TRUE}
+temps.moy <- rowMeans(temps)
+par(mfrow=c(1, 2)) # 2 graphiques sur 1 ligne
+par(mar=c(1, 1, 1, 1))
+matplot(seqn, temps.moy, xlab='seqn', ylab='temps_moy')
+matplot(seqn, log(temps.moy)^2, xlab='seqn', ylab='expression(log(temps_moy)^2)')
+``` 
+La courbe *temps_moy* en fonction de *n* (graphe de gauche) n’a pas une forme linéaire. Nous modélisons donc, de même que dans la partie précédente, la courbe $\log(temps.moy)^2$ en fonction de $n$ auquel on peut appliquer un modèle linéaire (graphe de droite).
+
+## Ajustement du modèle linéaire de $\log(temps.moy)^2$ en fonction de $n$.
+
+```{r, echo=TRUE}
+vect_temps_moy <- log(as.vector(temps.moy))^2
+temps.lm.moy <- lm(vect_temps_moy ~ seqn)
+``` 
+
+## Analyse de la validité du modèle 
+
+```{r, echo=TRUE}
+summary(temps.lm.moy)
+``` 
+
+## pertinence des coefficients et du modèle
+
+Le summary nous donne ici différents indicateurs pour évaluer le modèle de régression linéaire.
+
+Dans un premier temps nous étudions les coefficients du modèle linéaire : 
+la constante Intercept possède une erreur importante (une moyenne de 12,551 sur 5 exécutions). Mais elle a une p-valeur moyenne de 6,64% ce qui est important (supérieur à 5%). La valeur d’ordonnée à l’origine estimée a donc une certaine probabilité d’être erronée. 
+le coefficient seqn a une p-valeur très faible de l’ordre de $10^{-7}$. Sa valeur estimée a donc un faible risque d’être erronée. Généralement, cette valeur a une erreur relativement faible (1,399).
+
+En moyenne, le coefficient $R^2$ vaut 0.9656. Cette valeur proche de 1 signifie que les observations s’éloignent peu du modèle.
+
+On en déduit donc que la modélisation linéaire est ici cohérente.
+
+## étude des hypothèses sur les résidus.
+
+```{r, echo=TRUE}
+par(mfrow=c(2,2)) # 4 graphiques, sur 2 lignes et 2 colonnes
+par(mar=c(1,1,1,1))
+plot(temps.lm.moy)
+```
+
+
+Nous cherchons désormais à vérifier les hypothèses sur les résidus, en étudiant les 4 graphiques générés. 
+
+Residuals vs Fitted et Scale-Location : généralement, on n’observe pas de tendance véritablement marquée, mais le point 1 est anormal. Donc l’espérance des résidus n’est pas nulle. De plus le nuage de points ne s’écarte pas donc la variance de résidus est constante.
+Normal Q-Q : les points sont alignés sur la diagonale donc la distribution des résidus suit une loi normale. 
+Residuals vs Leverage : autour de six exécutions, nous remarquons l'existence d'outliers. Les points 1 et 10 sont éloignés, notamment le point 1 qui est au-delà de la distance de Cook. 
+
+En conclusion ici l’hypothèse de l’indépendance n’est pas vérifiée. Si la plupart des points semblent confirmer une loi normale (sachant qu’un point en représente 10 puisque nous avons fait une moyenne), il faudrait tout de même reprendre l’étude après avoir retiré le point 1 des observations. Cela permettrait de conclure de nouveau, et aussi de vérifier si le point 10 est aberrant et à retirer également.
+
+Pour vérifier si les résidus suivent bien une loi normale, nous faisons le test de Shapiro-Wilk :
+
+```{r, echo=TRUE}
+shapiro.test(residuals(temps.lm.moy))
+```
+
+
+Pour 6 exécutions, nous obtenons une valeur moyenne de p-value de 74,12%, largement supérieure à 5%. On ne peut donc rien conclure sur la loi des résidus. Il faut donc comme conclu précédemment réaliser de nouveau une étude sans le point 1.
+
+
+## 2.3. Comportement par rapport à la structure du graphe
+
+Nous commençons par récupérer le jeu de données ’DonneesTSP.csv’ dans un data.frame nommé data.graph. Il est constitué de la mesure du temps moyen de l’algorithme Branch&Bound sur 20 exécutions sur 73 graphes similaires.
+
+## Lecture du fichier 'DonneesTSP.csv'.
+```{r, echo=TRUE}
+data.graph <- data.frame(read.csv('DonneesTSP.csv'))
+```
+## Ajustement du modèle linéaire de $\log(temps.moy)^2$ en fonction de toutes les variables présentes. Modèle sans constante.
+
+```{r, echo=TRUE}
+data_temps <- log(data.graph$tps)
+data.graph$dim <- sqrt(data.graph$dim)
+data.graph$tps<-NULL
+data_temps.lm <-lm(data_temps~.,data = data.graph)
+summary(data_temps.lm)
+```
+
+## Mise en oeuvre d'une sélection de variables pour ne garder que les variables pertinentes.
+
+La fonction step appliquée permet d’éliminer les coefficients non pertinents :
+```{r, echo=TRUE}
+new_lm <-step(data_temps.lm)
+summary(new_lm)
+```
+Nous remarquons donc que la fonction step a éliminé la variable diameter, non pertinente pour notre étude, ce qui permet de minimiser le critère AIC.
+
+Certains coefficients sont bien retenus même s’ils ne semblent pas être d’une grande importance pour l'étude, étant donné leur faible coefficient (cf sd.dist et sd.deg) 
+
+## Analyse de la validité du modèle :
+
+## Pertinence de ses coefficients : 
+
+Nous pouvons donc vérifier la pertinence du nouveau modèle construit :
+
+```{r, echo=TRUE}
+summary(new_lm)
+```
+D’après les résultats présentés par la fonction summary, on peut déduire que :
+
+Pour la plupart des coefficients, les p-value restent assez faibles ce qui nous permet de valider notre modèle multidimensionnel. 
+En moyenne, le ratio “Multiple R-squared” vaut à peu près 0.993 (valeur très proche de 1) ce qui signifie que les observations s’éloignent peu du modèle.
+Nous remarquons des coefficients plus ou moins importants selon leur pertinence avec des écarts plutôt corrects (en comparant avec les modèles étudiés auparavant).
+
+
+```{r, echo=TRUE}
+par(mfrow=c(2,2)) # 4 graphiques, sur 2 lignes et 2 colonnes
+par(mar=c(1,1,1,1))
+plot(new_lm)
+```
+Nous cherchons ensuite à vérifier les hypothèses sur les résidus, en étudiant les 4 graphiques générés : 
+
+Les graphiques Residuals vs Fitted et Scale-Location  : On observe que le nuage de point est réparti ce qui peut dire que la variance des résidus n’est pas constante. On remarque aussi que les points présentent une tendance pas très marquée sur le graphique ce qui nous permet de dire que l'espérance est nulle.
+Le graphique Normal Q-Q :  Ce graphique se rapproche énormément de la linéarité . Nous pouvons donc assumer que les résidus suivent bien une loi normale. Cela reste à confirmer en effectuant le test de Shapiro-Wilk.
+ Le graphique Residuals vs Leverage :  montre l'influence des échantillons. Nous ne remarquons pas l'existence d'outliers qui représentent des points très éloignés des autres ou spécialement en dehors des bornes par rapport à la distance de Cook.
+
+## étude des hypothèses sur les résidus.
+
+```{r, echo=TRUE}
+shapiro.test(residuals(new_lm))
+```
+En effectuant 5 exécutions, la p-value moyenne obtenue est de 0,3641 (>5%). On peut donc conclure que les résidus ne suivent pas une loi normale.
+
+
